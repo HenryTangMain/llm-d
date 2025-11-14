@@ -1,0 +1,93 @@
+# Intel BMG (Battlemage G21) configuration for Inference Scheduling
+# Quick reference values file - ready to use with helmfile
+
+# Configure accelerator type for Intel BMG
+accelerator:
+  type: intel
+  resources:
+    intel: "gpu.intel.com/xe"  # BMG uses 'xe' resource type
+
+# Model configuration - using small model suitable for BMG
+modelArtifacts:
+  uri: "hf://Qwen/Qwen3-0.6B"
+  size: 10Gi
+  authSecretName: "llm-d-hf-token"
+  name: "Qwen/Qwen3-0.6B"
+
+# Service and routing configuration
+routing:
+  servicePort: 8000
+
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      # name: set via helmfile
+
+# Replica configuration
+replicas: 2  # Start with 2 replicas, adjust based on workload
+
+# Monitoring configuration
+monitoring:
+  podmonitor:
+    enabled: true
+    portName: "metrics"
+    path: "/metrics"
+    interval: "30s"
+
+# Container configuration
+containers:
+- name: "vllm"
+  image: ghcr.io/llm-d/llm-d-xpu:v0.3.1
+  modelCommand: vllmServe
+
+  # vLLM arguments optimized for BMG
+  args:
+    - "--max-model-len"
+    - "8192"
+    - "--block-size"
+    - "128"
+    - "--disable-log-requests"
+    - "--disable-uvicorn-access-log"
+
+  # Security context for Intel GPUs
+  securityContext:
+    fsGroup: 107
+    supplementalGroups:
+      - 107
+
+  # Environment variables for Intel XPU
+  env:
+    - name: VLLM_WORKER_MULTIPROC_METHOD
+      value: "spawn"
+    - name: VLLM_TARGET_DEVICE
+      value: "xpu"
+
+  # Container ports
+  ports:
+    - containerPort: 8000
+      name: metrics
+      protocol: TCP
+
+  # Resource allocation for BMG
+  resources:
+    limits:
+      memory: 32Gi
+      cpu: "8"
+      gpu.intel.com/xe: 1  # BMG GPU resource
+    requests:
+      memory: 32Gi
+      cpu: "8"
+      gpu.intel.com/xe: 1
+
+  # Volume mounts
+  mountModelVolume: true
+  volumeMounts:
+    - name: dshm
+      mountPath: /dev/shm
+
+# Volumes
+volumes:
+  - name: dshm
+    emptyDir:
+      medium: Memory
+      sizeLimit: 2Gi  # Shared memory for vLLM
