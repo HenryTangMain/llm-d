@@ -1,7 +1,23 @@
+
+# Corporate proxy + safe no_proxy for Intel/Akamai
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY=127.0.0.1,localhost,.local,192.0.0.1/16,172.16.0.0/12
+ARG http_proxy
+ARG https_proxy
+ARG no_proxy
 ARG ONEAPI_VERSION=2025.1.3-0
 ARG VLLM_VERSION=v0.11.0
 
 FROM intel/deep-learning-essentials:${ONEAPI_VERSION}-devel-ubuntu24.04 AS vllm-base
+
+# Set proxy environment variables after FROM
+ENV http_proxy=$http_proxy \
+    https_proxy=$https_proxy \
+    HTTP_PROXY=$HTTP_PROXY \
+    HTTPS_PROXY=$HTTPS_PROXY \
+    no_proxy=$NO_PROXY \
+    NO_PROXY=$NO_PROXY
 
 ARG CACHE_BUSTER
 RUN if [ -n "${CACHE_BUSTER}" ]; then \
@@ -41,8 +57,7 @@ CMD ["bash", "-c", "source /root/.bashrc && exec bash"]
 
 # Clone vLLM and build for XPU
 WORKDIR /workspace
-RUN --mount=type=cache,target=/var/cache/git \
-    git clone https://github.com/vllm-project/vllm.git && \
+RUN git clone https://github.com/vllm-project/vllm.git && \
     cd vllm && \
     git checkout ${VLLM_VERSION}
 
@@ -52,8 +67,7 @@ WORKDIR /workspace/vllm
 # suppress the python externally managed environment error
 RUN python3 -m pip config set global.break-system-packages true
 
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir \
+RUN pip install --no-cache-dir \
     -r requirements/xpu.txt
 
 ENV LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/usr/local/lib/"
@@ -61,19 +75,16 @@ ENV LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/usr/local/lib/"
 ENV VLLM_TARGET_DEVICE=xpu
 ENV VLLM_WORKER_MULTIPROC_METHOD=spawn
 
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install -v .
+RUN pip install -v .
 
 CMD ["/bin/bash"]
 
 FROM vllm-base AS runtime
 
 # install additional dependencies for openai api server
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install accelerate hf_transfer pytest pytest_asyncio lm_eval[api] modelscope
+RUN pip install accelerate hf_transfer pytest pytest_asyncio lm_eval[api] modelscope
 
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip uninstall oneccl oneccl-devel -y
+RUN pip uninstall oneccl oneccl-devel -y
 
 # install development dependencies (for testing)
 RUN python3 -m pip install -e tests/vllm_test_utils
