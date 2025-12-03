@@ -1,5 +1,5 @@
-# Intel XPU configuration for PD Disaggregation
-# This configuration sets up prefill and decode services with Intel XPU optimization
+# Intel XPU configuration for PD Disaggregation (2 GPU setup)
+# Configured for Intel Arc B580 GPUs with gpu.intel.com/xe resource
 
 multinode: false
 
@@ -9,7 +9,7 @@ accelerator:
 
 modelArtifacts:
   uri: "hf://deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
-  size: 10Gi  # Smaller model size for Intel XPU
+  size: 10Gi
   authSecretName: "llm-d-hf-token"
   name: "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
 
@@ -23,12 +23,10 @@ routing:
   parentRefs:
     - group: gateway.networking.k8s.io
       kind: Gateway
-      # name: # set in helmfile
 
   inferencePool:
     create: false
 
-  # create httpRoute via MS for using release name xpu-pd override
   httpRoute:
     create: true
 
@@ -41,7 +39,7 @@ decode:
   monitoring:
     podmonitor:
       enabled: true
-      portName: "metrics" # decode vLLM service port (from routing.proxy.targetPort)
+      portName: "metrics"
       path: "/metrics"
       interval: "30s"
   containers:
@@ -78,11 +76,11 @@ decode:
       limits:
         memory: 64Gi
         cpu: "16"
-        gpu.intel.com/i915: "1"
+        gpu.intel.com/xe: "1"
       requests:
         memory: 64Gi
         cpu: "16"
-        gpu.intel.com/i915: "1"
+        gpu.intel.com/xe: "1"
     mountModelVolume: true
     volumeMounts:
       - name: dshm
@@ -95,11 +93,11 @@ decode:
 
 prefill:
   create: true
-  replicas: 3
+  replicas: 1
   monitoring:
     podmonitor:
       enabled: true
-      portName: "metrics" # prefill vLLM service port (from routing.servicePort)
+      portName: "metrics"
       path: "/metrics"
       interval: "30s"
   containers:
@@ -136,11 +134,11 @@ prefill:
       limits:
         memory: 64Gi
         cpu: "8"
-        gpu.intel.com/i915: "1"
+        gpu.intel.com/xe: "1"
       requests:
         memory: 64Gi
         cpu: "8"
-        gpu.intel.com/i915: "1"
+        gpu.intel.com/xe: "1"
     mountModelVolume: true
     volumeMounts:
       - name: dshm

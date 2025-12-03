@@ -1,5 +1,5 @@
 ARG ONEAPI_VERSION=2025.1.3-0
-ARG VLLM_VERSION=v0.11.0
+ARG VLLM_VERSION=2176778cd
 
 FROM intel/deep-learning-essentials:${ONEAPI_VERSION}-devel-ubuntu24.04 AS vllm-base
 
@@ -34,6 +34,53 @@ RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1
 
 RUN apt install -y libze1 libze-dev libze-intel-gpu1 intel-opencl-icd libze-intel-gpu-raytracing
 
+# Install UCX build dependencies and RDMA packages
+RUN apt-get install -y --no-install-recommends \
+    autoconf \
+    automake \
+    libtool \
+    pkg-config \
+    libibverbs-dev \
+    libibverbs1 \
+    librdmacm-dev \
+    librdmacm1 \
+    rdma-core \
+    ibverbs-utils \
+    rdmacm-utils \
+    libnuma-dev \
+    libaio-dev
+
+# Build and install UCX from source with Level Zero (ze) support
+# Using git master to get the latest fixes for ze_copy compilation
+ENV UCX_HOME=/opt/ucx
+
+RUN cd /tmp && \
+    git clone --depth 1 https://github.com/openucx/ucx.git ucx-src && \
+    cd ucx-src && \
+    ./autogen.sh && \
+    CFLAGS="-Wno-error=incompatible-pointer-types" ./contrib/configure-release \
+        --prefix=${UCX_HOME} \
+        --with-ze=/usr \
+        --enable-shared \
+        --disable-static \
+        --disable-doxygen-doc \
+        --enable-optimizations \
+        --enable-cma \
+        --enable-devel-headers \
+        --enable-mt \
+        --with-verbs \
+        --with-rdmacm \
+        --with-dm && \
+    CFLAGS="-Wno-error=incompatible-pointer-types" make -j$(nproc) && \
+    make install-strip && \
+    rm -rf /tmp/ucx-src
+
+ENV PATH=${UCX_HOME}/bin:${PATH}
+ENV LD_LIBRARY_PATH=${UCX_HOME}/lib:${LD_LIBRARY_PATH}
+ENV CPATH=${UCX_HOME}/include:${CPATH}
+ENV LIBRARY_PATH=${UCX_HOME}/lib:${LIBRARY_PATH}
+ENV PKG_CONFIG_PATH=${UCX_HOME}/lib/pkgconfig:${PKG_CONFIG_PATH}
+
 RUN wget https://github.com/uxlfoundation/oneCCL/releases/download/2021.15.4/intel-oneccl-2021.15.4.11_offline.sh
 RUN bash intel-oneccl-2021.15.4.11_offline.sh -a --silent --eula accept && echo "source /opt/intel/oneapi/setvars.sh --force" >> /root/.bashrc
 SHELL ["bash", "-c"]
@@ -41,8 +88,7 @@ CMD ["bash", "-c", "source /root/.bashrc && exec bash"]
 
 # Clone vLLM and build for XPU
 WORKDIR /workspace
-RUN --mount=type=cache,target=/var/cache/git \
-    git clone https://github.com/vllm-project/vllm.git && \
+RUN git clone https://github.com/vllm-project/vllm.git && \
     cd vllm && \
     git checkout ${VLLM_VERSION}
 
@@ -52,8 +98,7 @@ WORKDIR /workspace/vllm
 # suppress the python externally managed environment error
 RUN python3 -m pip config set global.break-system-packages true
 
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir \
+RUN pip install --no-cache-dir \
     -r requirements/xpu.txt
 
 ENV LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/usr/local/lib/"
@@ -61,30 +106,44 @@ ENV LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/usr/local/lib/"
 ENV VLLM_TARGET_DEVICE=xpu
 ENV VLLM_WORKER_MULTIPROC_METHOD=spawn
 
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install -v .
+RUN pip install -v .
 
 CMD ["/bin/bash"]
 
 FROM vllm-base AS runtime
 
 # install additional dependencies for openai api server
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install accelerate hf_transfer pytest pytest_asyncio lm_eval[api] modelscope
+RUN pip install accelerate hf_transfer pytest pytest_asyncio lm_eval[api] modelscope
 
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip uninstall oneccl oneccl-devel -y
+RUN pip uninstall oneccl oneccl-devel -y
 
 # install development dependencies (for testing)
 RUN python3 -m pip install -e tests/vllm_test_utils
 
-# install nixl from source code
+# Patch the NIXL install script to enable Level Zero (ze) support in UCX
+# and fix the -Werror compilation issue, and ensure RDMA support
 RUN if [ -f /workspace/vllm/tools/install_nixl_from_source_ubuntu.py ]; then \
-        python3 /workspace/vllm/tools/install_nixl_from_source_ubuntu.py; \
+        # Enable Level Zero support\
+        sed -i 's/--with-ze=no/--with-ze=\/usr/g' /workspace/vllm/tools/install_nixl_from_source_ubuntu.py && \
+        # Add --with-rdmacm for RDMA connection manager support after --with-verbs\
+        sed -i 's/"--with-verbs",/"--with-verbs",\n        "--with-rdmacm",/g' /workspace/vllm/tools/install_nixl_from_source_ubuntu.py && \
+        # Ensure libibverbs-dev and librdmacm-dev are in apt packages\
+        sed -i 's/"libtool-bin",/"libtool-bin",\n        "libibverbs-dev",\n        "librdmacm-dev",\n        "rdma-core",/g' /workspace/vllm/tools/install_nixl_from_source_ubuntu.py && \
+        echo "Patched NIXL install script to enable Level Zero and RDMA support"; \
+        cat /workspace/vllm/tools/install_nixl_from_source_ubuntu.py | grep -A15 "configure_command ="; \
+    fi
+
+# install nixl from source code (now with ze and RDMA support)
+RUN if [ -f /workspace/vllm/tools/install_nixl_from_source_ubuntu.py ]; then \
+        CFLAGS="-Wno-error=incompatible-pointer-types" python3 /workspace/vllm/tools/install_nixl_from_source_ubuntu.py --force-reinstall; \
     else \
         echo "ERROR: /workspace/vllm/tools/install_nixl_from_source_ubuntu.py not found!" >&2; \
         exit 1; \
     fi
 ENV LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/usr/local/lib/python3.12/dist-packages/.nixl.mesonpy.libs/plugins/"
+
+# Set UCX transport to use InfiniBand, RC, and Level Zero copy
+ENV UCX_TLS="ib,rc,ze_copy,tcp,sm,self"
+ENV UCX_LOG_LEVEL="info"
 
 ENTRYPOINT ["python", "-m", "vllm.entrypoints.openai.api_server"]
