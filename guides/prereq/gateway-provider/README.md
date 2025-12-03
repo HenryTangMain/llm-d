@@ -32,15 +32,19 @@ By integrating with a Gateway -- instead of developing an llm-d specific proxy l
 
 ## Select and install an `inference-scheduler` compatible Gateway implementation
 
-llm-d requires you select a [Gateway implementation that supports the inference-scheduler](https://gateway-api-inference-extension.sigs.k8s.io/implementations/gateways/). Your infrastructure may provide a default compatible implementation, or you may choose to deploy a gateway implementation onto your cluster.
+llm-d requires you select a [Gateway implementation that supports the inference-scheduler](https://gateway-api-inference-extension.sigs.k8s.io/implementations/gateways/). Your infrastructure may provide a default compatible implementation, or you may choose to deploy a gateway implementation onto your cluster. Pick the guidance that matches your environment:
 
-### Use an infrastructure provided Gateway implementation
+<!-- TABS:START -->
+
+<!-- TAB:Cloud-managed (GKE):default -->
+### Cloud-managed (GKE)
+#### Use an infrastructure provided Gateway implementation
 
 We recommend using the infrastructure provided Gateway with our guides if available.
 
-#### Google Kubernetes Engine (GKE)
+##### Google Kubernetes Engine (GKE)
 
-GKE automatically enables an inference-compatible Gateway control plane when you enable the `HttpLoadBalancing` addon.  
+GKE automatically enables an inference-compatible Gateway control plane when you enable the `HttpLoadBalancing` addon.
 
 The key choice for deployment is whether you want to create a regional internal Application Load Balancer - accessible only workloads within your VPC (class name: `gke-l7-rilb`) - or a regional external Application Load Balancer - accessible to the internet (class name: `gke-l7-regional-external-managed`).
 
@@ -55,18 +59,20 @@ The following steps from the [GKE Gateways deployment documentation](https://clo
 
 The other steps are optional and are not necessary to continue with your guide.
 
-### Self-installed Gateway implementations
+<!-- TAB:Self-installed (Istio/Kgateway) -->
+### Self-installed (Istio/Kgateway)
+#### Self-installed Gateway implementations
 
 llm-d provides a Helm chart that installs and configures the `kgateway` or `istio` Gateway implementations.
 
-#### Before you begin
+##### Before you begin
 
 Prior to deploying a Gateway control plane, you must install the custom resource definitions (CRDs) configuration that adds the Kubernetes API objects:
 
-- [Gateway API v1.3.0 CRDs](https://github.com/kubernetes-sigs/gateway-api/tree/v1.3.0/config/crd)
-  - for more information see their [docs](https://gateway-api.sigs.k8s.io/guides/)
-- [Gateway API Inference Extension CRDs v1.0.1](https://github.com/kubernetes-sigs/gateway-api-inference-extension/tree/v1.0.1/config/crd)
-  - for more information see their [docs](https://gateway-api-inference-extension.sigs.k8s.io/)
+    - [Gateway API v1.3.0 CRDs](https://github.com/kubernetes-sigs/gateway-api/tree/v1.3.0/config/crd)
+      - for more information see their [docs](https://gateway-api.sigs.k8s.io/guides/)
+    - [Gateway API Inference Extension CRDs v1.2.0-rc.1](https://github.com/kubernetes-sigs/gateway-api-inference-extension/tree/v1.2.0-rc.1/config/crd)
+      - for more information see their [docs](https://gateway-api-inference-extension.sigs.k8s.io/)
 
 We have provided the [`install-gateway-provider-dependencies.sh`](./install-gateway-provider-dependencies.sh) script:
 
@@ -74,7 +80,7 @@ We have provided the [`install-gateway-provider-dependencies.sh`](./install-gate
 ./install-gateway-provider-dependencies.sh
 ```
 
-To remove the created dependencies: 
+To remove the created dependencies:
 
 ```bash
 ./install-gateway-provider-dependencies.sh delete
@@ -88,7 +94,7 @@ export GATEWAY_API_INFERENCE_EXTENSION_CRD_REVISION="v0.5.0"
 ./install-gateway-provider-dependencies.sh
 ```
 
-#### Installation
+##### Installation
 
 To install the gateway control plane:
 
@@ -97,7 +103,7 @@ helmfile apply -f <your_gateway_choice>.helmfile.yaml # options: [`istio`, `kgat
 # ex: helmfile apply -f istio.helmfile.yaml
 ```
 
-#### Targeted install
+##### Targeted install
 
 If the CRDs already exist in your cluster and you do not wish to re-apply them, use the `--selector kind=gateway-control-plane` selector to limit your changes to the infrastructure:
 
@@ -110,9 +116,13 @@ helmfile destroy -f <your_gateway_choice> --selector kind=gateway-control-plane
 
 If you wish to bump versions or customize your installs, check out our helmfiles for [istio](./istio.helmfile.yaml), and [kgateway](./kgateway.helmfile.yaml) respectively.
 
-### Other Gateway implementations
+<!-- TAB:Other providers -->
+### Other providers
+
 
 For other [compatible Gateway implementations](https://gateway-api-inference-extension.sigs.k8s.io/implementations/gateways/) follow the instructions for your selected Gateway. Ensure the necessary CRDs for Gateway API and the Gateway API Inference Extension are installed.
+
+<!-- TABS:END -->
 
 ## Verify your installation
 
